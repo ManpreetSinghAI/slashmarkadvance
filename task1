@@ -1,0 +1,85 @@
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import TruncatedSVD
+
+# Load user listening history data
+user_data = pd.read_csv('user_data.csv')  # Columns: user_id, track_id, listen_count
+
+# Load music metadata (features) data
+music_data = pd.read_csv('music_data.csv')  # Columns: track_id, feature1, feature2, ..., featureN
+
+# Preprocess Data
+
+# Create user-item interaction matrix
+user_item_matrix = user_data.pivot_table(index='user_id', columns='track_id', values='listen_count').fillna(0)
+
+# Normalize music features
+scaler = StandardScaler()
+music_features = music_data.drop('track_id', axis=1)
+music_features_scaled = scaler.fit_transform(music_features)
+
+# Add track_id back to scaled features
+music_data_scaled = pd.DataFrame(music_features_scaled, columns=music_features.columns)
+music_data_scaled['track_id'] = music_data['track_id']
+
+# Collaborative Filtering
+item_similarity = cosine_similarity(user_item_matrix.T)
+
+def recommend_collaborative(user_id, user_item_matrix, item_similarity, n_recommendations=5):
+    user_vector = user_item_matrix.loc[user_id].values.reshape(1, -1)
+    scores = np.dot(user_vector, item_similarity)
+    recommended_items = np.argsort(scores[0])[::-1][:n_recommendations]
+    recommended_track_ids = user_item_matrix.columns[recommended_items]
+    return recommended_track_ids
+
+# Content-Based Filtering
+def recommend_content(track_id, music_data_scaled, n_recommendations=5):
+    track_index = music_data_scaled[music_data_scaled['track_id'] == track_id].index[0]
+    track_vector = music_data_scaled.drop('track_id', axis=1).loc[track_index].values.reshape(1, -1)
+    scores = cosine_similarity(track_vector, music_data_scaled.drop('track_id', axis=1))
+    recommended_tracks = np.argsort(scores[0])[::-1][:n_recommendations]
+    recommended_track_ids = music_data_scaled.iloc[recommended_tracks]['track_id'].values
+    return recommended_track_ids
+
+# Hybrid Recommendation
+def recommend_hybrid(user_id, user_item_matrix, item_similarity, music_data_scaled, n_recommendations=5):
+    collaborative_recommendations = recommend_collaborative(user_id, user_item_matrix, item_similarity, n_recommendations)
+    content_recommendations = [recommend_content(track_id, music_data_scaled, n_recommendations) for track_id in collaborative_recommendations]
+    hybrid_recommendations = np.unique(np.concatenate(content_recommendations))
+    return hybrid_recommendations[:n_recommendations]
+
+# Matrix Factorization (SVD)
+svd = TruncatedSVD(n_components=50, random_state=42)
+user_item_matrix_svd = svd.fit_transform(user_item_matrix)
+
+user_similarity = cosine_similarity(user_item_matrix_svd)
+
+def recommend_svd(user_id, user_item_matrix, user_similarity, n_recommendations=5):
+    user_index = user_item_matrix.index.get_loc(user_id)
+    scores = user_similarity[user_index]
+    similar_users = np.argsort(scores)[::-1][1:]  # Exclude the user itself
+    similar_users_items = user_item_matrix.iloc[similar_users].sum(axis=0)
+    recommended_items = similar_users_items.sort_values(ascending=False).index[:n_recommendations]
+    return recommended_items
+
+# Example Usage
+user_id = 1  # Example user ID
+
+# Collaborative Filtering Recommendation
+recommended_tracks_cf = recommend_collaborative(user_id, user_item_matrix, item_similarity)
+print(f"Collaborative Filtering recommended tracks for user {user_id}: {recommended_tracks_cf}")
+
+# Content-Based Filtering Recommendation
+track_id = user_item_matrix.columns[0]  # Example track ID
+recommended_tracks_cb = recommend_content(track_id, music_data_scaled)
+print(f"Content-Based Filtering recommended tracks similar to track {track_id}: {recommended_tracks_cb}")
+
+# Hybrid Recommendation
+recommended_tracks_hybrid = recommend_hybrid(user_id, user_item_matrix, item_similarity, music_data_scaled)
+print(f"Hybrid recommended tracks for user {user_id}: {recommended_tracks_hybrid}")
+
+# SVD-Based Recommendation
+recommended_tracks_svd = recommend_svd(user_id, user_item_matrix, user_similarity)
+print(f"SVD-based recommended tracks for user {user_id}: {recommended_tracks_svd}")
